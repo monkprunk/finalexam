@@ -7,8 +7,7 @@ import (
 
 func main() {
 
-	database.Conn()
-	customer.CreateTb()
+	database.CreateTbCustomers()
 	r := customer.NewRouter()
-	r.Run(":1234")
+	r.Run(":2019")
 }

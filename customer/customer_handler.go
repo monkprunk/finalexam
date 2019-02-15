@@ -1,48 +1,35 @@
 package customer
 
 import (
-	"log"
+	"database/sql"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 	"github.com/mongprunk/finalexam/database"
+	"github.com/mongprunk/finalexam/middleware"
 )
 
 var id int = 0
 var customers []Customer
 
 func getCustomersHandler(c *gin.Context) {
-	pStatus := c.Query("status")
-	var temp []Todo
-	sql := "SELECT id, name, email, status FROM customers"
-	if pStatus != "" {
-		sql += " WHERE status=$1"
-	}
-
-	stmt, err := database.Conn().Prepare(sql)
+	var result []Customer
+	rows, err := database.SelectAllCustomers()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, err.Error())
-		return
-	}
-	rows, err := stmt.Query()
-	if pStatus != "" {
-		rows, err = stmt.Query(pStatus)
-	}
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, err.Error())
-		return
+		c.JSON(http.StatusProcessing, err.Error())
 	}
 	for rows.Next() {
-		t := Todo{}
+		t := Customer{}
 		err := rows.Scan(&t.ID, &t.Name, &t.Email, &t.Status)
 		if err != nil {
-			log.Fatal("can't scan : ", err)
+			c.JSON(http.StatusInternalServerError, err.Error())
+			return
 		}
-		temp = append(temp, t)
+		result = append(result, t)
 	}
-	c.JSON(http.StatusOK, temp)
+	c.JSON(http.StatusOK, result)
 }
 
 func getCustomersByIdHandler(c *gin.Context) {
@@ -50,38 +37,34 @@ func getCustomersByIdHandler(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusProcessing, err.Error())
 	}
-	stmt, err := database.Conn().Prepare("SELECT id, title, status FROM customers WHERE id=$1")
+	var row *sql.Row
+	row, err = database.SelectCustomersById(pId)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, err.Error())
 		return
 	}
-	row := stmt.QueryRow(pId)
-	t := Todo{}
-	err = row.Scan(&t.ID, &t.Title, &t.Status)
+	result := Customer{}
+	err = row.Scan(&result.ID, &result.Name, &result.Email, &result.Status)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, t)
+	c.JSON(http.StatusOK, result)
 
 }
 
 func createCustomersHandler(c *gin.Context) {
-	var item Todo
+	var item Customer
 	err := c.ShouldBindJSON(&item)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, err.Error())
 		return
 	}
-
-	row := database.InsertTodo(item.Title, item.Status)
-	var id int
-	err = row.Scan(&id)
+	item.ID, err = database.InsertCustomer(item.Name, item.Email, item.Status)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, err.Error())
 		return
 	}
-	item.ID = id
 	c.JSON(http.StatusCreated, item)
 }
 
@@ -89,25 +72,19 @@ func updateCustomersHandler(c *gin.Context) {
 	pId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusProcessing, err.Error())
+		return
 	}
-	var temp Todo
+	var temp Customer
 	err = c.ShouldBindJSON(&temp)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, err.Error())
 		return
 	}
-	stmt, err := database.Conn().Prepare("UPDATE customers SET title=$2, status=$3 WHERE id=$1;")
+	temp.ID, err = database.UpdateCustomer(pId, temp.Name, temp.Email, temp.Status)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	_, err = stmt.Exec(pId, &temp.Title, &temp.Status)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, err.Error())
-		return
-	}
-	temp.ID = pId
 	c.JSON(http.StatusOK, temp)
 }
 
@@ -115,28 +92,25 @@ func deleteCustomersHandler(c *gin.Context) {
 	pId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusProcessing, err.Error())
+		return
 	}
 
-	stmt, err := database.Conn().Prepare("DELETE FROM customers WHERE id=$1")
+	err = database.DeleteCustomer(pId)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, err.Error())
+		return
 	}
 
-	_, err = stmt.Exec(pId)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, err.Error())
-	}
-
-	c.JSON(http.StatusOK, gin.H{"status": "success"})
+	c.JSON(http.StatusOK, gin.H{"message": "customer deleted"})
 }
 
 func NewRouter() *gin.Engine {
 	r := gin.Default()
-	v1 := r.Group("")
-	v1.GET("/customers", getCustomersHandler)
-	v1.GET("/customers/:id", getCustomersByIdHandler)
-	v1.POST("/customers", createCustomersHandler)
-	v1.PUT("/customers/:id", updateCustomersHandler)
-	v1.DELETE("/customers/:id", deleteCustomersHandler)
+	r.Use(middleware.LoginMiddleware)
+	r.GET("/customers", getCustomersHandler)
+	r.GET("/customers/:id", getCustomersByIdHandler)
+	r.POST("/customers", createCustomersHandler)
+	r.PUT("/customers/:id", updateCustomersHandler)
+	r.DELETE("/customers/:id", deleteCustomersHandler)
 	return r
 }
